@@ -1,0 +1,4 @@
+(fp_lib_table
+  (lib (name ds1307_pcf8583)(type Legacy)(uri "C:\\Program Files\\KiCad\\share\\kicad\\library\\ds1307_pcf8583.mod")(options "")(descr ""))
+  (lib (name tsubuta)(type Legacy)(uri C:\Users\Yutaka\Documents\Yutaka\Documents\RaspberryPi\PowerController\tsubuta.kicad_mod)(options "")(descr ""))
+)
