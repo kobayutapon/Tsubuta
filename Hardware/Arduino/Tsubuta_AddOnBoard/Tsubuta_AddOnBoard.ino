@@ -59,6 +59,34 @@
 
 #define LED_PIN     13
 
+// ------- Command
+#define COMMAND_GETINFO           0x00
+#define COMMAND_SETINTERVALTIME   0x01
+#define COMMAND_SAVE_SETTING      0x0F
+
+#define COMMAND_SETGPIO1          0x10
+#define COMMAND_SETGPIO2          0x11
+#define COMMAND_SETGPIO3          0x12
+#define COMMAND_SETGPIO4          0x13
+
+#define COMMAND_SET_GPO1          0x20
+#define COMMAND_SET_GPO2          0x21
+#define COMMAND_SET_GPO3          0x22
+#define COMMAND_SET_GPO4          0x23
+
+#define COMMAND_GET_GPI1          0x30
+#define COMMAND_GET_GPI2          0x31
+#define COMMAND_GET_GPI3          0x32
+#define COMMAND_GET_GPI4          0x33
+
+#define COMMAND_GET_ADC1          0x40
+#define COMMAND_GET_ADC2          0x41
+#define COMMAND_GET_ADC3          0x42
+#define COMMAND_GET_ADC4          0x43
+
+#define COMMAND_UNKNOWN           0xFF
+
+
 // ------- for Standby mode
 #ifndef cbi
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
@@ -100,6 +128,59 @@ typedef struct config_info {
 
 
 
+typedef struct _command_info_ {
+  unsigned char m_ucCommand;
+  unsigned char m_ucLength;
+  bool          m_bReply;
+} COMMAND_TABLE;
+
+
+typedef struct _buffer_tag_ {
+  unsigned char   len;
+  unsigned char   rdptr;
+  unsigned char   wrptr;  
+  unsigned char   buff[32];
+} CMD_BUFFER;
+
+CMD_BUFFER    g_bufI2CRecive;
+CMD_BUFFER    g_bufI2CSend;
+
+typedef struct _i2c_command_tag_ {
+  unsigned char   ucCmd;
+  char            cLen;
+  unsigned char   ucBuff[16];
+} RCVCMD;
+
+volatile RCVCMD g_RcvCmd;
+
+volatile unsigned char g_szI2Cbuf[32];
+
+const COMMAND_TABLE   g_cCommandInfo[] = {
+  { 0x00 , 0x01 , true },     // Get Baord Information 
+  { 0x01 , 0x05 , false },    // Set Interval Timer |
+  { 0x02 , 0x01 , false },    // RPi Power Off |
+  { 0x0F , 0x01 , false },    // Save settings to EEPROM |
+  { 0x10 , 0x02 , false },    // Set GPIO1 State|
+  { 0x11 , 0x02 , false },    // Set GPIO2 State|
+  { 0x12 , 0x02 , false },    // Set GPIO3 State|
+  { 0x13 , 0x02 , false },    // Set GPIO4 State|
+  { 0x20 , 0x02 , false },    // Set GPO1 H/L |
+  { 0x21 , 0x02 , false },    // Set GPO2 H/L |
+  { 0x22 , 0x02 , false },    // Set GPO3 H/L |
+  { 0x23 , 0x02 , false },    // Set GPO4 H/L |
+  { 0x30 , 0x02 , true },     // Get GPI1 |
+  { 0x31 , 0x02 , true },     // Get GPI2 |
+  { 0x32 , 0x02 , true },     // Get GPI3 |
+  { 0x33 , 0x02 , true },     // Get GPI4 |
+  { 0x40 , 0x01 , true },     // Get ADC1 |
+  { 0x41 , 0x01 , true },     // Get ADC2 |
+  { 0x42 , 0x01 , true },     // Get ADC3 |
+  { 0x43 , 0x01 , true },     //| Get ADC4 |
+  { 0xFF , 0xFF, false },   
+};
+
+
+
 volatile CONFIG_TSUBUTA  g_stSystemSetting;
 
 // 割り込み内でのイベント管理用
@@ -118,6 +199,48 @@ bool  isAutoPowerOn();
 bool  isTimerDone();
 bool  isRaspberryPiPowerOn();
 void  setRaspberryPiPower( int nMode );
+
+
+// ====================================================
+//   I2Cの送受信バッファ回り
+// ====================================================
+void InitCommandBuffer(CMD_BUFFER *pPtr)
+{
+  pPtr->len = 0;
+  pPtr->rdptr = 0;
+  pPtr->wrptr = 0;
+  memset((void *)pPtr->buff, 0, sizeof(unsigned char)*32 );
+}
+
+bool SetCommandBuffer( CMD_BUFFER *pPtr, unsigned char c )
+{
+  if ( pPtr->len >= 32 ) return false;    // バッファがいっぱいな場合
+  pPtr->buff[pPtr->wrptr] = c;
+  pPtr->wrptr++;
+  pPtr->wrptr &= 31;
+  pPtr->len++;
+  
+  return true;
+  
+}
+
+bool GetCommandBuffer( CMD_BUFFER *pPtr, unsigned char *c )
+{
+  if ( pPtr->len <= 0 ) return false;    // バッファが空な場合
+  *c = pPtr->buff[pPtr->rdptr];
+  pPtr->rdptr++;
+  pPtr->rdptr &= 31;
+  pPtr->len--;
+  
+  return true;
+  
+}
+
+bool IsCommandBufferEmpty( CMD_BUFFER *pPtr )
+{
+  return ( pPtr->len <= 0 ) ? true : false ;
+}
+
 
 // ---------------------------------------------------------------
 //    システム設定を行う
@@ -143,6 +266,28 @@ void initSystemSettingInfo( void )
   g_stSystemSetting.m_RTCEventSignaled = false;
   g_stSystemSetting.m_PowerKeyEventSignaled = false;
   
+}
+
+void SaveSystemSettings( void )
+{
+
+  EEPROM.write(0, VERSION);
+  EEPROM.write(1, (g_stSystemSetting.mAutoPowerOnMode == 0)?0:1);
+  EEPROM.write(2, (g_stSystemSetting.mIntervalTime >> 24 ) & 0xFF );
+  EEPROM.write(3, (g_stSystemSetting.mIntervalTime >> 16 ) & 0xFF );
+  EEPROM.write(4, (g_stSystemSetting.mIntervalTime >>  8 ) & 0xFF );
+  EEPROM.write(5, (g_stSystemSetting.mIntervalTime ) & 0xFF );
+  EEPROM.write(6, g_stSystemSetting.m_GPIO1mode & 0xff );
+  EEPROM.write(7, g_stSystemSetting.m_GPIO2mode & 0xff );
+  EEPROM.write(8, g_stSystemSetting.m_GPIO3mode & 0xff );
+  EEPROM.write(9, g_stSystemSetting.m_GPIO4mode & 0xff );
+
+}
+
+void ClearSystemSettings( void )
+{
+  initSystemSettingInfo();
+  SaveSystemSettings();  
 }
 
 // ----------------------------------------------
@@ -202,19 +347,24 @@ void checkPowerOffFromMainCPU()
 void checkSystemInput(  )
 {
 
-#if 1
   if ( LOW == digitalRead(  TSUBUTA_GPIO0 ) ) {
     g_stSystemSetting.m_PowerKeyEventSignaled = true;
   } else {
     g_stSystemSetting.m_PowerKeyEventSignaled = false;    
   }
-#endif
-  
 }
 
 
 void setup() {
+  
   // Setup System 
+  InitCommandBuffer(&g_bufI2CRecive);
+  InitCommandBuffer(&g_bufI2CSend);
+
+  g_RcvCmd.ucCmd = 0;
+  g_RcvCmd.cLen = -1;
+  memset( (void *)g_RcvCmd.ucBuff, 0, sizeof(unsigned char)*16 );
+  
   initSystemSettingInfo();
 
   // Set GPIO Settings
@@ -309,6 +459,10 @@ void SystemRun()
 void loop() {
   // put your main code here, to run repeatedly:
 
+  if ( IsCommandBufferEmpty(&g_bufI2CRecive) == false ) {
+    
+  }
+
   if (true == isRaspberryPiPowerOn()) {
     SystemRun();
   } else {
@@ -359,23 +513,28 @@ void loop() {
 //   Interupt handler
 // --------------------------------
 // Interrupt handler for I2C
-unsigned long   g_ulI2Ccommand;
+
+
 
 void receiveEvent( int howMany  )
 {
+  
   while(Wire.available()) {
-    g_ulI2Ccommand = Wire.read();
+    SetCommandBuffer( &g_bufI2CRecive, Wire.read());
   }
 
   Serial.print("I2C Recive:");
-  Serial.println(g_ulI2Ccommand);
+//  Serial.println(g_ulI2Ccommand);
   
 }
 
 void requestEvent( )
 {
-  Serial.println("I2C Send:");
-  Wire.write(0x00);
+  unsigned char c;
+
+  while(true == GetCommandBuffer( &g_bufI2CRecive, &c)) {
+    Wire.write( c );
+  }
 }
 
 
