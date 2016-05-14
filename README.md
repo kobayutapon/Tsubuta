@@ -2,7 +2,7 @@
 Tsubuta is IoT device produced by GDG Shinshu
 
 ## Presentation
-* [Presentation Document](./Document/Tsubuta_Presentation.pdf)
+* [Presentation Document](./Document/Tsubuta_Presentation.pdf.pdf)
 
 ## Hardware Information  
 * [Hardware Specification](./Hardware/BoardSpec.md)
