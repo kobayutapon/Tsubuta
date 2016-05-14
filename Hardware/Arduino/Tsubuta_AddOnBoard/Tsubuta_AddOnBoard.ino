@@ -13,6 +13,8 @@
 // --------------------------------------
 #define VERSION 0x0001
 
+#define INTERVAL_TIME   60*15   // default interval : 15min
+
 // --------------------------------------
 //   EEPROM defenision
 // --------------------------------------
@@ -62,6 +64,8 @@
 // ------- Command
 #define COMMAND_GETINFO           0x00
 #define COMMAND_SETINTERVALTIME   0x01
+#define COMMAND_POWEROFF          0x02
+#define COMMAND_LOAD_SETTING      0x0E
 #define COMMAND_SAVE_SETTING      0x0F
 
 #define COMMAND_SETGPIO1          0x10
@@ -147,18 +151,21 @@ CMD_BUFFER    g_bufI2CSend;
 
 typedef struct _i2c_command_tag_ {
   unsigned char   ucCmd;
+  char            cParamLen;
   char            cLen;
   unsigned char   ucBuff[16];
 } RCVCMD;
 
 volatile RCVCMD g_RcvCmd;
 
-volatile unsigned char g_szI2Cbuf[32];
+const int GPIO_PinMappping[] = { 5, 6, 7, 8 };
+const int ADC_PinMappping[] = { 0, 1, 2, 3 };
 
 const COMMAND_TABLE   g_cCommandInfo[] = {
   { 0x00 , 0x01 , true },     // Get Baord Information 
   { 0x01 , 0x05 , false },    // Set Interval Timer |
   { 0x02 , 0x01 , false },    // RPi Power Off |
+  { 0x0E , 0x01 , false },    // Load Settings from EEPROM |
   { 0x0F , 0x01 , false },    // Save settings to EEPROM |
   { 0x10 , 0x02 , false },    // Set GPIO1 State|
   { 0x11 , 0x02 , false },    // Set GPIO2 State|
@@ -204,33 +211,51 @@ void  setRaspberryPiPower( int nMode );
 // ====================================================
 //   I2Cの送受信バッファ回り
 // ====================================================
+void PutBufferStatus(CMD_BUFFER *pPtr)
+{
+  Serial.print("len:"); Serial.println(pPtr->len);
+  Serial.print("wptr:"); Serial.println(pPtr->wrptr);
+  Serial.print("rptr:"); Serial.println(pPtr->rdptr);
+}
+
 void InitCommandBuffer(CMD_BUFFER *pPtr)
 {
   pPtr->len = 0;
   pPtr->rdptr = 0;
   pPtr->wrptr = 0;
   memset((void *)pPtr->buff, 0, sizeof(unsigned char)*32 );
+
+  PutBufferStatus(pPtr);
 }
 
 bool SetCommandBuffer( CMD_BUFFER *pPtr, unsigned char c )
 {
+  Serial.print("chr:"); Serial.println(c);
+  
   if ( pPtr->len >= 32 ) return false;    // バッファがいっぱいな場合
   pPtr->buff[pPtr->wrptr] = c;
   pPtr->wrptr++;
   pPtr->wrptr &= 31;
   pPtr->len++;
+  PutBufferStatus(pPtr);
   
   return true;
   
 }
 
-bool GetCommandBuffer( CMD_BUFFER *pPtr, unsigned char *c )
+bool GetCommandBuffer( CMD_BUFFER *pPtr, unsigned char *c , int *pLen )
 {
   if ( pPtr->len <= 0 ) return false;    // バッファが空な場合
-  *c = pPtr->buff[pPtr->rdptr];
-  pPtr->rdptr++;
-  pPtr->rdptr &= 31;
-  pPtr->len--;
+
+  *pLen = pPtr->len;
+  while( pPtr->len > 0 ) {
+    *c++ = pPtr->buff[pPtr->rdptr];
+    pPtr->rdptr++;
+    pPtr->rdptr &= 31;
+    pPtr->len--;
+
+    PutBufferStatus(pPtr);
+  }
   
   return true;
   
@@ -238,7 +263,164 @@ bool GetCommandBuffer( CMD_BUFFER *pPtr, unsigned char *c )
 
 bool IsCommandBufferEmpty( CMD_BUFFER *pPtr )
 {
+  PutBufferStatus(pPtr);
   return ( pPtr->len <= 0 ) ? true : false ;
+}
+
+void ClearCommand( RCVCMD *pCmd )
+{
+  pCmd->ucCmd = 0;
+  pCmd->cParamLen = 0;
+  pCmd->cLen = -1;
+  memset( (void *)pCmd->ucBuff, 0, sizeof(unsigned char)*16 );
+
+}
+
+int GetCmdParamLen( unsigned char ucCmd )
+{
+  int nRet = -1;
+  int nIndex = 0;
+  
+  while(g_cCommandInfo[nIndex].m_ucCommand != COMMAND_UNKNOWN ) {
+    if ( g_cCommandInfo[nIndex].m_ucCommand == ucCmd ) {
+      nRet = g_cCommandInfo[nIndex].m_ucLength - 1;
+      break;
+    }
+    nIndex++;
+  }
+
+  return nRet;
+}
+
+
+//  ---- I2C Command Function
+int  SetGPIOMode( int pin, int mode )
+{
+  int PinMode = -1;
+  
+  if ( mode == 0x00 ) {
+    PinMode = INPUT;
+  } else if ( mode == 0x01 ) {
+    PinMode = INPUT_PULLUP;
+  } else if ( mode == 0x02 ) {
+    PinMode = OUTPUT;
+  }
+  if ( PinMode >= 0 ) {
+    pinMode(pin, PinMode );
+    if (PinMode == OUTPUT ) {
+      digitalWrite(pin, LOW);
+    }
+  }
+  return PinMode;
+}
+
+
+void ParseCommand( RCVCMD *pCmd )
+{
+  unsigned char ctmp;
+  unsigned long ltmp;
+  
+  switch( pCmd->ucCmd ) {
+    case COMMAND_GETINFO:
+      Serial.println("CMD:GETINFO");
+      SetCommandBuffer(&g_bufI2CSend, g_stSystemSetting.mEEPROMVersion);
+      break;
+
+    case COMMAND_SETINTERVALTIME:
+      Serial.println("CMD:SETINTERVAL");
+      ltmp = pCmd->ucBuff[0]; ltmp <<= 8;
+      ltmp |= pCmd->ucBuff[1]; ltmp <<= 8;
+      ltmp |= pCmd->ucBuff[2]; ltmp <<= 8;
+      ltmp |= pCmd->ucBuff[3];
+      g_stSystemSetting.mIntervalTime = ltmp;
+      Serial.print("Interval Time:");
+      Serial.println(g_stSystemSetting.mIntervalTime);
+      break;
+
+    case COMMAND_LOAD_SETTING:
+      Serial.println("CMD:LOADSETTING");
+      LoadSystemSettings();
+      break;
+
+    case COMMAND_SAVE_SETTING:
+      Serial.println("CMD:SAVESETTING");
+      SaveSystemSettings();
+      break;
+
+    case COMMAND_SETGPIO1:
+      Serial.println("CMD:SETGPIO1_CNF");
+      ltmp = SetGPIOMode(5, pCmd->ucBuff[0] );
+      if ( ltmp >= 0 ) {
+        g_stSystemSetting.m_GPIO1mode = ltmp;
+      }
+      break;
+      
+    case COMMAND_SETGPIO2:
+      Serial.println("CMD:SETGPIO2_CNF");
+      ltmp = SetGPIOMode(6, pCmd->ucBuff[0] );
+      if ( ltmp >= 0 ) {
+        g_stSystemSetting.m_GPIO1mode = ltmp;
+      }
+      break;
+      
+    case COMMAND_SETGPIO3:
+      Serial.println("CMD:SETGPIO3_CNF");
+      ltmp = SetGPIOMode(7, pCmd->ucBuff[0] );
+      if ( ltmp >= 0 ) {
+        g_stSystemSetting.m_GPIO1mode = ltmp;
+      }
+      break;
+      
+    case COMMAND_SETGPIO4:
+      Serial.println("CMD:SETGPIO4_CNF");
+      ltmp = SetGPIOMode(8, pCmd->ucBuff[0] );
+      if ( ltmp >= 0 ) {
+        g_stSystemSetting.m_GPIO1mode = ltmp;
+      }
+      break;
+      
+      break;
+
+    case COMMAND_SET_GPO1:
+    case COMMAND_SET_GPO2:
+    case COMMAND_SET_GPO3:
+    case COMMAND_SET_GPO4:
+      ctmp = pCmd->ucCmd - COMMAND_SET_GPO1;
+      Serial.print("CMD:SET_GPO_STATE"); Serial.println(ctmp);
+      if ( pCmd->ucBuff[0] == 0x00 ) {
+        digitalWrite( GPIO_PinMappping[ctmp], LOW );
+      } else {
+        digitalWrite( GPIO_PinMappping[ctmp], HIGH );
+      }
+      break;
+
+    case COMMAND_GET_GPI1:
+    case COMMAND_GET_GPI2:
+    case COMMAND_GET_GPI3:
+    case COMMAND_GET_GPI4:
+      ctmp = pCmd->ucCmd - COMMAND_SET_GPO1;
+      Serial.print("CMD:GET_GPI_STATE"); Serial.println(ctmp);
+      ltmp = digitalRead( GPIO_PinMappping[ctmp] );
+      SetCommandBuffer(&g_bufI2CSend, (unsigned char)ltmp );
+      break;
+
+    case COMMAND_GET_ADC1:
+    case COMMAND_GET_ADC2:
+    case COMMAND_GET_ADC3:
+    case COMMAND_GET_ADC4:
+      ctmp = pCmd->ucCmd - COMMAND_GET_ADC1;
+      Serial.print("CMD:GETADC_STATE"); Serial.println(ctmp);
+      ltmp = analogRead( ADC_PinMappping[ctmp] );
+      Serial.print("ADC:");
+      Serial.println(ltmp, HEX );
+      SetCommandBuffer(&g_bufI2CSend, (unsigned char)( (ltmp >> 8 ) & 0xff ));
+      SetCommandBuffer(&g_bufI2CSend, (unsigned char)(  ltmp & 0xff ));
+    
+      break;
+
+    default:
+      break;  
+  }
 }
 
 
@@ -247,11 +429,19 @@ bool IsCommandBufferEmpty( CMD_BUFFER *pPtr )
 //   ここは後でEEPROMから設定を行うようにする
 //   一番最初でEEPROM未設定か設定がおかしかったら初期化すること
 // ---------------------------------------------------------------
+void dumpEEPROM( void )
+{
+  Serial.println("--------");
+  for( int i=0; i<10; i++ ) {
+    Serial.println(EEPROM.read(i), HEX);
+  }
+}
+
 void initSystemSettingInfo( void )
 {
-  g_stSystemSetting.mEEPROMVersion = 0xff;
+  g_stSystemSetting.mEEPROMVersion = VERSION;
   g_stSystemSetting.mAutoPowerOnMode = 0x01;
-  g_stSystemSetting.mIntervalTime = 10 ;
+  g_stSystemSetting.mIntervalTime = INTERVAL_TIME ;
   g_stSystemSetting.m_GPIO1mode = INPUT_PULLUP;
   g_stSystemSetting.m_GPIO2mode = INPUT;
   g_stSystemSetting.m_GPIO3mode = INPUT;
@@ -268,6 +458,51 @@ void initSystemSettingInfo( void )
   
 }
 
+void PutSystemSettings( void )
+{
+  unsigned long tmp;
+  Serial.print("VERSION:"); Serial.println(EEPROM.read(0), HEX );
+  Serial.print("AUTO-PW-ON:"); Serial.println(EEPROM.read(1), HEX );
+  Serial.print("GPIO1:"); Serial.println(EEPROM.read(6), HEX ); delay(10);
+  Serial.print("GPIO2:"); Serial.println(EEPROM.read(7), HEX ); delay(10);
+  Serial.print("GPIO3:"); Serial.println(EEPROM.read(8), HEX ); delay(10);
+  Serial.print("GPIO4:"); Serial.println(EEPROM.read(9), HEX ); delay(10);
+  tmp = EEPROM.read(2) & 0xff; tmp <<= 8;
+  tmp |= EEPROM.read(3) & 0xff; tmp <<= 8;
+  tmp |= EEPROM.read(4) & 0xff; tmp <<= 8;
+  tmp |= EEPROM.read(5) & 0xff;
+  Serial.print("INTERVAL:"); Serial.println( tmp ); delay(300);
+
+  
+}
+void LoadSystemSettings( void )
+{
+  unsigned long tmp;
+  if ( EEPROM.read(0) == 0xFF ) {
+    Serial.println("EEPROM not defined.USe default."); delay(10);
+    initSystemSettingInfo();
+    SaveSystemSettings();
+    return;
+  }
+  g_stSystemSetting.mEEPROMVersion = EEPROM.read(0);
+  g_stSystemSetting.mAutoPowerOnMode = EEPROM.read(1);
+  if ( g_stSystemSetting.mAutoPowerOnMode != 0 && g_stSystemSetting.mAutoPowerOnMode != 1 ) {
+    Serial.println("Illigal value:AUTO-POWER-ON. Use default value."); delay(10);
+    g_stSystemSetting.mAutoPowerOnMode = 0x01;
+  }
+  tmp = EEPROM.read(2) & 0xff; tmp <<= 8;
+  tmp |= EEPROM.read(3) & 0xff; tmp <<= 8;
+  tmp |= EEPROM.read(4) & 0xff; tmp <<= 8;
+  tmp |= EEPROM.read(5) & 0xff;
+  
+  g_stSystemSetting.mIntervalTime = tmp;
+  
+  g_stSystemSetting.m_GPIO1mode = EEPROM.read(6);
+  g_stSystemSetting.m_GPIO2mode = EEPROM.read(7);
+  g_stSystemSetting.m_GPIO3mode = EEPROM.read(8);
+  g_stSystemSetting.m_GPIO4mode = EEPROM.read(9);
+  
+}
 void SaveSystemSettings( void )
 {
 
@@ -357,15 +592,19 @@ void checkSystemInput(  )
 
 void setup() {
   
+  // シリアルポート初期化:
+  Serial.begin(UART_BAUDRATE);
+  Serial.println("Tsubuta add-on board.");
+
   // Setup System 
   InitCommandBuffer(&g_bufI2CRecive);
   InitCommandBuffer(&g_bufI2CSend);
+  ClearCommand((RCVCMD*)&g_RcvCmd);
 
-  g_RcvCmd.ucCmd = 0;
-  g_RcvCmd.cLen = -1;
-  memset( (void *)g_RcvCmd.ucBuff, 0, sizeof(unsigned char)*16 );
-  
-  initSystemSettingInfo();
+
+//  initSystemSettingInfo();
+  LoadSystemSettings();
+  PutSystemSettings();
 
   // Set GPIO Settings
   pinMode( TSUBUTA_RPIPOWER, OUTPUT );          // Raspberry Pi On/Off
@@ -382,9 +621,6 @@ void setup() {
   digitalWrite( TSUBUTA_RPIPOWER, LOW );
   digitalWrite( TSUBUTA_RPI_INT, LOW );
   
-  // シリアルポート初期化:
-  Serial.begin(UART_BAUDRATE);
-  Serial.println("Tsubuta add-on board.");
 
   // Set I2C
   // TWIのライブラリの中で5Vにプルアップされてしまう。ここでPullUpをやめているけど、
@@ -458,54 +694,17 @@ void SystemRun()
 
 void loop() {
   // put your main code here, to run repeatedly:
-
+#if 0
   if ( IsCommandBufferEmpty(&g_bufI2CRecive) == false ) {
     
   }
-
+#endif
   if (true == isRaspberryPiPowerOn()) {
     SystemRun();
   } else {
     SystemSleep();
   }
   
-#if 0
-  checkSystemInput();
-//  Serial.print(g_stSystemSetting.m_lRunTime);
-//  Serial.print(":");
-//  Serial.println(g_stSystemSetting.m_TimerCounter);
-  
-  if ( false == isRaspberryPiPowerOn()) {
-    system_sleep(); // RPiの電源が入っていなかったらねる。
-
-    // 経過時間をチェックする。タイマーが入っていたら電源ONにする
-    if ( true == isTimerDone() ) {
-      setRaspberryPiPower(RPI_POWER_ON);
-      g_stSystemSetting.m_TimerCounter = 0;
-      Serial.println("Resume.");
-    }
-
-    // パワーキーが押されて復帰していたなら電源を入れる
-    if ( true == g_stSystemSetting.m_PowerKeyEventSignaled ) {
-      setRaspberryPiPower(RPI_POWER_ON);
-      g_stSystemSetting.m_PowerKeyEventSignaled = false;
-      Serial.println("Resume.");
-    }
-    
-  } else {
-    // Raspberry PiからのPower Off制御が入ったら電源を切る
-    checkPowerOffFromMainCPU();
-    if ( true == g_stSystemSetting.m_bPowerOffEventSignaled ) {
-      Serial.println("Power off from Raspberry Pi. 5sec wait...");
-      Serial.println("Enter to standby mode.");
-      delay(250);
-      setRaspberryPiPower(RPI_POWER_OFF); 
-      g_stSystemSetting.m_bPowerOffEventSignaled = false;
-    }
-    if ( true == g_stSystemSetting.m_PowerKeyEventSignaled ) {
-    }
-  }
-#endif
 }
 
 
@@ -514,26 +713,57 @@ void loop() {
 // --------------------------------
 // Interrupt handler for I2C
 
-
+bool g_bRequestEvent;
 
 void receiveEvent( int howMany  )
 {
+  int c;
+  int len;
   
   while(Wire.available()) {
-    SetCommandBuffer( &g_bufI2CRecive, Wire.read());
-  }
-
-  Serial.print("I2C Recive:");
-//  Serial.println(g_ulI2Ccommand);
-  
+    g_bRequestEvent = false;
+    c = Wire.read();
+    Serial.print("I2C:Rcv ");
+    Serial.println(c, HEX);
+    if ( g_RcvCmd.cLen < 0 ) {
+      g_RcvCmd.ucCmd = (unsigned char)c;
+      if ( (g_RcvCmd.cParamLen = GetCmdParamLen(g_RcvCmd.ucCmd)) >= 0 ) {
+        g_RcvCmd.cLen = 0;
+      }
+      if ( g_RcvCmd.cParamLen == 0x00 ) {
+        Serial.println("Parse command");
+        ParseCommand((RCVCMD *)&g_RcvCmd);
+        ClearCommand((RCVCMD *)&g_RcvCmd);        
+      }
+    } else {
+      g_RcvCmd.ucBuff[g_RcvCmd.cLen] = c;
+      g_RcvCmd.cLen++;
+      if ( g_RcvCmd.cLen >= g_RcvCmd.cParamLen ) {
+        // パラメータがすべてそろったのでコマンド解析を行う
+        Serial.println("Parse command");
+        ParseCommand((RCVCMD *)&g_RcvCmd);
+        ClearCommand((RCVCMD *)&g_RcvCmd);
+      }
+    }
+  }  
 }
 
 void requestEvent( )
 {
   unsigned char c;
+  unsigned char buff[32];
+  int len;
+  
+  Serial.println("I2C:Send Request ");
 
-  while(true == GetCommandBuffer( &g_bufI2CRecive, &c)) {
-    Wire.write( c );
+//  if (true == GetCommandBuffer( &g_bufI2CSend, &c)) {
+//    Wire.write( c );
+//    Serial.println(c, HEX);
+//  }
+  if ( g_bufI2CSend.len > 0 ) {
+    if ( true == GetCommandBuffer( &g_bufI2CSend, buff, &len )) {
+      Wire.write(buff, len );
+    }
   }
 }
 

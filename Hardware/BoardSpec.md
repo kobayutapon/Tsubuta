@@ -42,8 +42,7 @@ Slave Address 0x08
 Raspberry Piと接続。電源は3.3V。  
 
 ### プログラム仕様
-* I2C Command  
-1バイトで送受信する。
+#### I2C Command一覧  
 
 |Command|Parameter|Length|Decsription|
 |:------|---------|------|-----------|
@@ -67,3 +66,47 @@ Raspberry Piと接続。電源は3.3V。
 | 0x41 | N/A | 0x01 | Get ADC2 |
 | 0x42 | N/A | 0x01 | Get ADC3 |
 | 0x43 | N/A | 0x01 | Get ADC4 |
+
+#### Command詳細
+* ボード情報取得(0x00)  
+FWのVersion情報を取得する。コマンド実行例をいかに示す。
+```
+root@raspberrypi:/home/pi# i2cget -y 1 0x08 0x00
+0x01
+```
+
+* 起動時間間隔設定(0x01)  
+自動起動の間隔を秒単位で指定する。指定は4バイトで秒単位で指定する。
+```
+i2cset -y 1 0x08 0x01 0x00 0x00 0x00 0xff i
+```
+
+* 起動時間間隔設定(0x02)  
+Raspberry Piの電源をOFFにする。
+```
+i2cset -y 1 0x08 0x02
+```
+
+
+
+
+## Raspberry Piからの制御例
+### i2ctoolsを使う場合
+* Inerval Timerの設定
+```
+i2cset 1 0x08 0x01 0x00 0x00 0x00 0xff i
+```
+
+* EEPROMの保存
+```
+i2cset 1 0x08 0x0F
+```
+
+### GPIOの制御
+GPIO経由で電源を切るには以下のコマンドを実行する。  
+
+```
+echo 17 > /sys/class/gpio/export
+echo out > /sys/class/gpio/gpio17/direction
+echo 1 > /sys/class/gpio/gpio17/value
+```
