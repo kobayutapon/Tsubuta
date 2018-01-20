@@ -1,15 +1,14 @@
-update=2016/02/24 16:30:25
+update=2017/12/22 7:47:05
 version=1
 last_client=kicad
-[general]
-version=1
 [cvpcb]
 version=1
 NetIExt=net
 [pcbnew]
 version=1
-PageLayoutDescrFile=
+PageLayoutDescrFile=C:/xesscorp/KiCad/page_layouts/title_block_only.kicad_wks
 LastNetListRead=
+UseCmpFile=1
 PadDrill=0.6
 PadDrillOvalY=0.6
 PadSizeH=1.5
@@ -25,19 +24,11 @@ SolderMaskMinWidth=0
 DrawSegmentWidth=0.2
 BoardOutlineThickness=0.09999999999999999
 ModuleOutlineThickness=0.15
-[schematic_editor]
+[general]
 version=1
-PageLayoutDescrFile=
-PlotDirectoryName=
-SubpartIdSeparator=0
-SubpartFirstId=65
-NetFmtName=
-SpiceForceRefPrefix=0
-SpiceUseNetNumbers=0
-LabSize=60
 [eeschema]
 version=1
-LibDir=
+LibDir=C:/xesscorp/KiCad/libraries
 [eeschema/libraries]
 LibName1=power
 LibName2=device
@@ -68,5 +59,14 @@ LibName26=opto
 LibName27=atmel
 LibName28=contrib
 LibName29=valves
-LibName30=Raspberry_PI_B+
-LibName31=ds1307_pcf8583
+LibName30=switches
+[schematic_editor]
+version=1
+PageLayoutDescrFile=
+PlotDirectoryName=
+SubpartIdSeparator=0
+SubpartFirstId=65
+NetFmtName=Pcbnew
+SpiceForceRefPrefix=0
+SpiceUseNetNumbers=0
+LabSize=60
