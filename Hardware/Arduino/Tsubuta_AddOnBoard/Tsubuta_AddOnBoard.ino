@@ -38,7 +38,8 @@
 
 
 //#define BATTERY_ALERT_THREAD      3000
-#define BATTERY_ALERT_THREAD      180
+#define BATTERY_ALERT_THREAD      30000
+//#define BATTERY_ALERT_THREAD      180
 
 bool g_bPowerOn = true;
 unsigned long g_PwrOnCount;
